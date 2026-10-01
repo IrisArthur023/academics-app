@@ -29,8 +29,48 @@ const ring =
   "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--clay)]";
 const btn = `rounded-xl px-4 py-2 text-sm bg-[color:var(--clay)] text-[color:var(--bg)] font-medium hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition ${ring}`;
 const ghost = `rounded-xl px-4 py-2 text-sm border border-[color:var(--line)] text-[color:var(--text)] hover:bg-[color:var(--line)] transition ${ring}`;
+const round = `grid h-10 w-10 shrink-0 place-items-center rounded-full text-[color:var(--text)] hover:bg-[color:var(--line)] transition ${ring}`;
+const menuBox =
+  "absolute bottom-full mb-3 min-w-[200px] rounded-2xl border border-[color:var(--line)] bg-[color:var(--panel)] p-1.5 shadow-xl shadow-black/40";
+const menuItem = `flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-[color:var(--text)] hover:bg-[color:var(--line)] disabled:opacity-40 disabled:hover:bg-transparent ${ring}`;
 
-function AIView({ name }) {
+const SR =
+  typeof window !== "undefined" &&
+  (window.SpeechRecognition || window.webkitSpeechRecognition);
+
+const Icon = ({ d, ...p }) => (
+  <svg
+    width="20"
+    height="20"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    {...p}
+  >
+    {d}
+  </svg>
+);
+const PlusIcon = () => <Icon d={<path d="M12 5v14M5 12h14" />} />;
+const MicIcon = () => (
+  <Icon
+    d={
+      <>
+        <rect x="9" y="3" width="6" height="11" rx="3" />
+        <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+      </>
+    }
+  />
+);
+const SendIcon = () => <Icon d={<path d="M12 19V5M5 12l7-7 7 7" />} />;
+const ChevIcon = () => (
+  <Icon width="14" height="14" d={<path d="m6 9 6 6 6-6" />} />
+);
+
+function AIView({ openDrive }) {
   const [mode, setMode] = useState("study");
   const [chats, setChats] = useState({
     study: [],
@@ -41,18 +81,47 @@ function AIView({ name }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [menu, setMenu] = useState(null); // null | 'plus' | 'mode'
+  const [listening, setListening] = useState(false);
   const box = useRef();
   const end = useRef();
+  const dock = useRef();
+  const rec = useRef();
   const msgs = chats[mode];
-  const started = msgs.length > 0;
 
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs, busy]);
 
+  // Grow the textarea with its content, up to ~6 lines
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+  }, [text]);
+
+  // Close menus on outside click or Escape
+  useEffect(() => {
+    if (!menu) return;
+    const away = (e) => {
+      if (!dock.current?.contains(e.target)) setMenu(null);
+    };
+    const esc = (e) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [menu]);
+
   async function send() {
     const q = text.trim();
     if (!q || busy) return;
+    rec.current?.stop();
     const next = [...msgs, { role: "user", content: q }];
     setChats((c) => ({ ...c, [mode]: next }));
     setText("");
@@ -71,109 +140,188 @@ function AIView({ name }) {
     }
   }
 
-  const composer = (
-    <div className="w-full max-w-3xl rounded-3xl border border-[color:var(--line)] bg-[color:var(--panel)] p-4 transition focus-within:border-[color:var(--dim)]">
-      <textarea
-        ref={box}
-        rows={2}
-        value={text}
-        placeholder={modes[mode].hint}
-        aria-label="Message"
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            send();
-          }
-        }}
-        className="w-full resize-none bg-transparent px-1 text-base text-[color:var(--text)] outline-none placeholder:text-[color:var(--dim)]"
-      />
-      <div className="mt-3 flex items-center justify-between">
-        <span
-          className="rounded-full px-3 py-1 text-xs text-[color:var(--text)]"
-          style={{ background: modes[mode].tint }}
-        >
-          {modes[mode].label}
-        </span>
-        <button className={btn} onClick={send} disabled={busy || !text.trim()}>
-          Send
-        </button>
-      </div>
-    </div>
-  );
+  function toggleMic() {
+    if (listening) {
+      rec.current?.stop();
+      return;
+    }
+    const r = new SR();
+    r.lang = "en-US";
+    r.interimResults = true;
+    r.continuous = false;
+    const base = text.trim() ? text.trim() + " " : "";
+    r.onresult = (e) =>
+      setText(
+        base +
+          Array.from(e.results)
+            .map((x) => x[0].transcript)
+            .join(""),
+      );
+    r.onend = () => setListening(false);
+    r.onerror = () => setListening(false);
+    rec.current = r;
+    r.start();
+    setListening(true);
+  }
 
   return (
-    <div className="flex flex-1 flex-col items-center px-4">
-      {!started && (
-        <div className="flex w-full flex-1 flex-col items-center justify-center gap-8 pb-24">
-          <h1 className="text-center font-serif text-4xl text-[color:var(--text)] sm:text-5xl">
-            <span className="mr-3 text-[color:var(--clay)]" aria-hidden="true">
-              ✺
-            </span>
-            Back at it, {name}
-          </h1>
-          {composer}
+    <div className="flex flex-1 flex-col">
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 overflow-y-auto px-4 pb-44 pt-8">
+        {msgs.length === 0 && (
+          <p className="m-auto max-w-md text-center font-serif text-xl text-[color:var(--dim)]">
+            {modes[mode].hint}
+          </p>
+        )}
+        {msgs.map((m, i) => (
           <div
-            className="flex flex-wrap justify-center gap-3"
-            role="tablist"
-            aria-label="Mode"
+            key={i}
+            className={
+              m.role === "user"
+                ? "max-w-[85%] self-end whitespace-pre-wrap rounded-2xl border border-[color:var(--line)] bg-[color:var(--panel)] px-4 py-3 text-[color:var(--text)]"
+                : "max-w-[92%] self-start whitespace-pre-wrap px-1 py-1 font-serif leading-relaxed text-[color:var(--text)]"
+            }
           >
-            {Object.entries(modes).map(([k, v]) => (
+            {m.content}
+          </div>
+        ))}
+        {busy && (
+          <div className="self-start px-1 text-[color:var(--dim)]">
+            Thinking…
+          </div>
+        )}
+        {err && (
+          <div className="self-start rounded-xl border border-[color:var(--late)] bg-[color:var(--late)]/40 px-4 py-3 text-sm text-[color:var(--text)]">
+            {err}. Check that your AI endpoint is running, then send again.
+          </div>
+        )}
+        <div ref={end} />
+      </div>
+
+      {/* Composer pinned to the bottom centre */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-[color:var(--bg)] via-[color:var(--bg)]/90 to-transparent px-4 pb-6 pt-10">
+        <div
+          ref={dock}
+          className="pointer-events-auto relative w-full max-w-3xl"
+        >
+          {menu === "plus" && (
+            <div className={`${menuBox} left-0`} role="menu">
               <button
-                key={k}
-                role="tab"
-                aria-selected={mode === k}
+                role="menuitem"
+                className={menuItem}
                 onClick={() => {
-                  setMode(k);
-                  box.current?.focus();
+                  setMenu(null);
+                  openDrive();
                 }}
-                className={`rounded-xl border px-4 py-2 text-sm text-[color:var(--text)] transition ${ring} ${mode === k ? "border-[color:var(--clay)]" : "border-[color:var(--line)] hover:bg-[color:var(--panel)]"}`}
-                style={mode === k ? { background: v.tint } : undefined}
               >
-                {v.label}
+                Open Google Drive
               </button>
-            ))}
+              <button
+                role="menuitem"
+                className={menuItem}
+                disabled={!msgs.length}
+                onClick={() => {
+                  setChats((c) => ({ ...c, [mode]: [] }));
+                  setErr("");
+                  setMenu(null);
+                }}
+              >
+                Clear this chat
+              </button>
+            </div>
+          )}
+          {menu === "mode" && (
+            <div className={`${menuBox} right-0`} role="menu">
+              {Object.entries(modes).map(([k, v]) => (
+                <button
+                  key={k}
+                  role="menuitemradio"
+                  aria-checked={mode === k}
+                  className={menuItem}
+                  onClick={() => {
+                    setMode(k);
+                    setMenu(null);
+                    box.current?.focus();
+                  }}
+                >
+                  <span
+                    className="h-3 w-3 rounded-full border border-[color:var(--dim)]"
+                    style={{ background: v.tint }}
+                  />
+                  <span className="grow">{v.label}</span>
+                  {mode === k && (
+                    <span
+                      className="text-[color:var(--clay)]"
+                      aria-hidden="true"
+                    >
+                      ✓
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-end gap-1 rounded-[28px] border border-[color:var(--line)] bg-[color:var(--panel)] p-2 shadow-lg shadow-black/40 transition focus-within:border-[color:var(--dim)]">
+            <button
+              className={round}
+              aria-label="More options"
+              aria-haspopup="menu"
+              aria-expanded={menu === "plus"}
+              onClick={() => setMenu(menu === "plus" ? null : "plus")}
+            >
+              <PlusIcon />
+            </button>
+            <textarea
+              ref={box}
+              rows={1}
+              value={text}
+              placeholder={modes[mode].hint}
+              aria-label="Message"
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              className="min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-base text-[color:var(--text)] outline-none placeholder:text-[color:var(--dim)]"
+            />
+            {SR && (
+              <button
+                className={`${round} ${listening ? "bg-[color:var(--late)]" : ""}`}
+                onClick={toggleMic}
+                aria-label={listening ? "Stop dictation" : "Dictate message"}
+                aria-pressed={listening}
+              >
+                <MicIcon />
+              </button>
+            )}
+            <button
+              className={`flex h-10 shrink-0 items-center gap-1.5 rounded-full px-4 text-sm text-[color:var(--text)] transition hover:brightness-125 ${ring}`}
+              style={{ background: modes[mode].tint }}
+              aria-haspopup="menu"
+              aria-expanded={menu === "mode"}
+              onClick={() => setMenu(menu === "mode" ? null : "mode")}
+            >
+              {modes[mode].label}
+              <ChevIcon />
+            </button>
+            <button
+              className={`grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[color:var(--clay)] text-[color:var(--bg)] transition hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed ${ring}`}
+              onClick={send}
+              disabled={busy || !text.trim()}
+              aria-label="Send"
+            >
+              <SendIcon />
+            </button>
           </div>
         </div>
-      )}
-
-      {started && (
-        <>
-          <div className="flex w-full max-w-3xl flex-1 flex-col gap-4 overflow-y-auto py-6">
-            {msgs.map((m, i) => (
-              <div
-                key={i}
-                className={
-                  m.role === "user"
-                    ? "max-w-[85%] self-end whitespace-pre-wrap rounded-2xl border border-[color:var(--line)] bg-[color:var(--panel)] px-4 py-3 text-[color:var(--text)]"
-                    : "max-w-[92%] self-start whitespace-pre-wrap px-1 py-1 font-serif leading-relaxed text-[color:var(--text)]"
-                }
-              >
-                {m.content}
-              </div>
-            ))}
-            {busy && (
-              <div className="self-start px-1 text-[color:var(--dim)]">
-                Thinking…
-              </div>
-            )}
-            {err && (
-              <div className="self-start rounded-xl border border-[color:var(--late)] bg-[color:var(--late)]/40 px-4 py-3 text-sm text-[color:var(--text)]">
-                {err}. Check that your AI endpoint is running, then send again.
-              </div>
-            )}
-            <div ref={end} />
-          </div>
-          <div className="sticky bottom-0 flex w-full justify-center bg-[color:var(--bg)] pb-5 pt-2">
-            {composer}
-          </div>
-        </>
-      )}
+      </div>
     </div>
   );
 }
 
-function DriveView() {
+function DriveView({ back }) {
   const [link, setLink] = useState(localStorage.getItem("driveLink") || "");
   const [folderId, setFolderId] = useState(
     localStorage.getItem("driveFolder") || "",
@@ -191,12 +339,18 @@ function DriveView() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-5 px-4 pb-8">
+    <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-5 px-4 pb-8 pt-6">
+      <div>
+        <button className={ghost} onClick={back}>
+          ← Back to chat
+        </button>
+      </div>
       <div className="flex flex-wrap items-center gap-3">
         <input
           value={link}
           onChange={(e) => setLink(e.target.value)}
           placeholder="Paste your Google Drive folder link"
+          aria-label="Google Drive folder link"
           className={`min-w-[220px] flex-1 rounded-xl border border-[color:var(--line)] bg-[color:var(--panel)] px-4 py-2 text-sm text-[color:var(--text)] placeholder:text-[color:var(--dim)] ${ring}`}
         />
         <button className={btn} onClick={connect}>
@@ -269,46 +423,15 @@ function DriveView() {
   );
 }
 
-export default function AIWorkspace({
-  name = "Pixel",
-  plan = "Free plan",
-  onUpgrade,
-}) {
+export default function AIWorkspace() {
   const [view, setView] = useState("ai");
-  const tab = (k, label) => (
-    <button
-      role="tab"
-      aria-selected={view === k}
-      onClick={() => setView(k)}
-      className={`rounded-lg px-4 py-1.5 text-sm transition ${ring} ${view === k ? "bg-[color:var(--bg)] text-[color:var(--text)]" : "text-[color:var(--dim)] hover:text-[color:var(--text)]"}`}
-    >
-      {label}
-    </button>
-  );
-
   return (
     <main className="flex min-h-screen flex-col bg-[color:var(--bg)] text-[color:var(--text)]">
-      <header className="flex flex-col items-center gap-4 px-4 pb-4 pt-6">
-        <div className="rounded-xl bg-[color:var(--panel)] px-4 py-2 text-sm text-[color:var(--dim)]">
-          {plan}
-          <span className="mx-2">·</span>
-          <button
-            onClick={onUpgrade}
-            className={`text-[color:var(--clay)] underline hover:brightness-125 ${ring}`}
-          >
-            Upgrade
-          </button>
-        </div>
-        <div
-          className="inline-flex gap-1 rounded-xl bg-[color:var(--panel)] p-1"
-          role="tablist"
-          aria-label="Workspace view"
-        >
-          {tab("ai", "AI page")}
-          {tab("drive", "Google Drive")}
-        </div>
-      </header>
-      {view === "ai" ? <AIView name={name} /> : <DriveView />}
+      {view === "ai" ? (
+        <AIView openDrive={() => setView("drive")} />
+      ) : (
+        <DriveView back={() => setView("ai")} />
+      )}
     </main>
   );
 }
